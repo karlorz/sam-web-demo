@@ -3,10 +3,11 @@
 import React, { useState, useEffect, useRef } from "react";
 import { cn } from "@/lib/utils";
 
-// sam-web package - using utilities and configs
+// Local model config (same as worker uses)
+import { MODEL_CONFIG, DEFAULT_MODEL } from "./modelConfig.js";
+
+// Local image utilities
 import {
-  MODEL_CONFIGS,
-  DEFAULT_MODEL_ID,
   maskImageCanvas,
   resizeAndPadBox,
   resizeCanvas,
@@ -14,7 +15,7 @@ import {
   float32ArrayToCanvas,
   sliceTensor,
   maskCanvasToFloat32Array,
-} from "sam-web";
+} from "@/lib/imageutils";
 
 // UI
 import {
@@ -35,8 +36,8 @@ import {
 
 export default function SAMDemo() {
   // Model selection
-  const [selectedModel, setSelectedModel] = useState(DEFAULT_MODEL_ID);
-  const modelConfig = MODEL_CONFIGS[selectedModel];
+  const [selectedModel, setSelectedModel] = useState(DEFAULT_MODEL);
+  const modelConfig = MODEL_CONFIG[selectedModel];
 
   // Resize+pad all images based on selected model config
   const imageSize = modelConfig.imageSize;
@@ -124,11 +125,14 @@ export default function SAMDemo() {
 
   // Decoding finished -> parse result and update mask
   const handleDecodingResults = (decodingResults) => {
+    // SAM2 returns 3 masks along with scores -> select best one
+    // MobileSAM returns 4 masks and may have IoU scores > 1.0 (valid high-confidence)
     const maskTensors = decodingResults.masks;
     const [, , width, height] = maskTensors.dims;
-    const maskScores = decodingResults.iou_predictions.data;
+    const maskScores = decodingResults.iou_predictions.cpuData;
 
-    // Find best mask by IoU score (manual iteration to avoid stack overflow)
+    // CRITICAL FIX: Avoid stack overflow with spread operator on large arrays
+    // Use manual iteration to find max score (handles IoU > 1.0)
     let bestMaskIdx = 0;
     let bestScore = -Infinity;
     for (let i = 0; i < maskScores.length; i++) {
@@ -138,11 +142,7 @@ export default function SAMDemo() {
       }
     }
 
-    const bestMaskArray = sliceTensor(
-      new Float32Array(maskTensors.data),
-      maskTensors.dims,
-      bestMaskIdx
-    );
+    const bestMaskArray = sliceTensor(maskTensors, bestMaskIdx);
     let bestMaskCanvas = float32ArrayToCanvas(bestMaskArray, width, height);
 
     // Resize to image dimensions for display
@@ -422,7 +422,7 @@ export default function SAMDemo() {
                     disabled={loading}
                     className="px-3 py-1 text-sm border rounded-md bg-white disabled:opacity-50 disabled:cursor-not-allowed"
                   >
-                    {Object.values(MODEL_CONFIGS).map((model) => (
+                    {Object.values(MODEL_CONFIG).map((model) => (
                       <option key={model.id} value={model.id}>
                         {model.name}
                       </option>
